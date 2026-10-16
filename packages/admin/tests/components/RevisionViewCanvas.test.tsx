@@ -729,6 +729,15 @@ describe("RevisionViewCanvas: blocks and repeater fields", () => {
 		expect(container.querySelector("section")?.textContent).toContain("Item 1");
 	});
 
+	it("labels a changed repeater item as changed rather than edited", async () => {
+		const { container } = await renderCanvas(
+			revisionDiff([itemsField("facts", "repeater", [itemRow(0, "changed", null)])]),
+		);
+		const itemElement = container.querySelector("section");
+		expect(itemElement?.textContent).toContain("Changed");
+		expect(itemElement?.textContent).not.toContain("Edited");
+	});
+
 	it("shows only the version's items when changes are hidden", async () => {
 		const { container } = await renderCanvas(sectionsDiff, false);
 		const article = container.querySelector("article")!;

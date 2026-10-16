@@ -1,6 +1,6 @@
+import { longestIncreasingSubsequence } from "./align.js";
 import type { DiffContext } from "./context.js";
 import { diffField } from "./fields.js";
-import { createInterner, lcsPairs } from "./lcs.js";
 import { canonicalJsonWithoutKeys, isRecord, type UnknownRecord } from "./normalize.js";
 import type {
 	DiffBlockFieldDefinition,
@@ -71,7 +71,8 @@ interface Item {
 /**
  * Rows of a blocks or repeater field in the new order, with each removed item right after the
  * item that preceded it. Items pair by unique `_key`, then by identical content, then by position
- * between those pairs when at least one of the two has no key: repeaters save no keys at all.
+ * when at least one of the two has no key: repeaters save no keys at all. When neither side has
+ * keys, any items still unpaired pair in order.
  */
 export function diffItems(
 	oldValue: readonly unknown[],
@@ -84,9 +85,10 @@ export function diffItems(
 	const newItems = toItems(newValue);
 	const pairs = new Map<number, number>();
 	pairByKey(oldItems, newItems, pairs);
-	pairByContent(oldItems, newItems, pairs, context);
-	const moved = movedItems(pairs, context);
+	pairByContent(oldItems, newItems, pairs);
+	const moved = movedItems(pairs);
 	pairByPosition(oldItems, newItems, pairs, moved);
+	pairKeylessRemainder(oldItems, newItems, pairs);
 
 	const removedAfter = new Map<number, number[]>();
 	const newIndexOf = new Map(Array.from(pairs, ([n, o]) => [o, n]));
@@ -199,39 +201,34 @@ function pairByKey(
 	});
 }
 
-/** Pairs unpaired items that hold exactly the same values, keeping their order. */
+/** Pairs equal values across reorders, using occurrence order when a value appears more than once. */
 function pairByContent(
 	oldItems: readonly Item[],
 	newItems: readonly Item[],
 	pairs: Map<number, number>,
-	context: DiffContext,
 ) {
 	const pairedOld = new Set(pairs.values());
-	const oldLeft = oldItems.flatMap((_, o) => (pairedOld.has(o) ? [] : [o]));
-	const newLeft = newItems.flatMap((_, n) => (pairs.has(n) ? [] : [n]));
-	if (oldLeft.length * newLeft.length > context.limits.maxBlockLcsCells) return;
-	const intern = createInterner();
-	const oldContent = intern(oldLeft.map((o) => oldItems[o]?.content ?? ""));
-	const newContent = intern(newLeft.map((n) => newItems[n]?.content ?? ""));
-	for (const [i, j] of lcsPairs(oldContent, newContent)) {
-		const o = oldLeft[i];
-		const n = newLeft[j];
-		if (o !== undefined && n !== undefined) pairs.set(n, o);
+	const oldByContent = new Map<string, number[]>();
+	for (let o = oldItems.length - 1; o >= 0; o--) {
+		if (pairedOld.has(o)) continue;
+		const item = oldItems[o];
+		if (!item) continue;
+		const indexes = oldByContent.get(item.content);
+		if (indexes) indexes.push(o);
+		else oldByContent.set(item.content, [o]);
 	}
+	newItems.forEach((item, n) => {
+		if (pairs.has(n)) return;
+		const o = oldByContent.get(item.content)?.pop();
+		if (o !== undefined) pairs.set(n, o);
+	});
 }
 
 /** New indexes of paired items outside the longest run that kept its order. */
-function movedItems(pairs: ReadonlyMap<number, number>, context: DiffContext): Set<number> {
+function movedItems(pairs: ReadonlyMap<number, number>): Set<number> {
 	const newOrder = [...pairs.keys()].toSorted((a, b) => a - b);
-	const oldOrder = newOrder.toSorted((a, b) => (pairs.get(a) ?? 0) - (pairs.get(b) ?? 0));
-	if (newOrder.length * oldOrder.length > context.limits.maxBlockLcsCells) return new Set();
-	const intern = createInterner();
-	const kept = new Set(
-		lcsPairs(intern(oldOrder.map(String)), intern(newOrder.map(String))).map(
-			([, n]) => newOrder[n],
-		),
-	);
-	return new Set(newOrder.filter((n) => !kept.has(n)));
+	const kept = longestIncreasingSubsequence(newOrder.map((n) => pairs.get(n) ?? 0));
+	return new Set(newOrder.filter((_, position) => !kept.has(position)));
 }
 
 /**
@@ -274,6 +271,24 @@ function pairByPosition(
 			if (oldItem.key && newItem.key) return;
 			pairs.set(n, o);
 		});
+	}
+}
+
+/** Compare unmatched keyless values in order when matching anchors straddle an edit. */
+function pairKeylessRemainder(
+	oldItems: readonly Item[],
+	newItems: readonly Item[],
+	pairs: Map<number, number>,
+) {
+	if (oldItems.some((item) => item.key) || newItems.some((item) => item.key)) return;
+	const pairedOld = new Set(pairs.values());
+	const oldLeft = oldItems.flatMap((_, o) => (pairedOld.has(o) ? [] : [o]));
+	const newLeft = newItems.flatMap((_, n) => (pairs.has(n) ? [] : [n]));
+	for (let index = 0; index < Math.min(oldLeft.length, newLeft.length); index++) {
+		const o = oldLeft[index];
+		const n = newLeft[index];
+		if (o === undefined || n === undefined || oldItems[o]?.type !== newItems[n]?.type) continue;
+		pairs.set(n, o);
 	}
 }
 

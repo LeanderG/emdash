@@ -1259,6 +1259,20 @@ describe("revision diff: blocks and repeater fields", () => {
 		]);
 	});
 
+	it("reports a keyed move when a blocks field exceeds the LCS work limit", () => {
+		const many = Array.from({ length: 501 }, (_, index) =>
+			item("hero", `h${index}`, { headline: `Block ${index}` }),
+		);
+		const diff = diffRevisions(
+			{ sections: many },
+			{ sections: [many[500], ...many.slice(0, 500)] },
+			fields,
+		);
+		expect(diff.changes).toEqual([
+			expect.objectContaining({ kind: "blockItem", action: "moved", label: "Hero" }),
+		]);
+	});
+
 	it("ignores a block type version upgrade that changes no value", () => {
 		const upgraded = { ...hero, _version: 2, centered: false };
 		expect(blockItemChanges([hero], [upgraded])).toEqual(["noChanges"]);
@@ -1323,6 +1337,32 @@ describe("revision diff: blocks and repeater fields", () => {
 			["removed", "Cheap"],
 			["unchanged", "Good"],
 		]);
+	});
+
+	it("keeps reordered repeater values instead of showing a removal and addition", () => {
+		const diff = diffRevisions(
+			{ facts: slides("Fast", "Cheap") },
+			{ facts: slides("Cheap", "Fast") },
+			fields,
+		);
+		const rows = itemsOf(diff, "facts");
+		expect(rows.map((row) => row.status)).toEqual(["unchanged", "unchanged"]);
+		expect(rows.filter((row) => row.moved)).toHaveLength(1);
+	});
+
+	it("compares remaining repeater values when an edit and reorder happen together", () => {
+		const diff = diffRevisions(
+			{ facts: slides("Fast", "Cheap", "Good") },
+			{ facts: slides("Cheaper", "Fast", "Good") },
+			fields,
+		);
+		const rows = itemsOf(diff, "facts");
+		expect(rows.map((row) => [row.status, row.value.statement])).toEqual([
+			["changed", "Cheaper"],
+			["unchanged", "Fast"],
+			["unchanged", "Good"],
+		]);
+		expect(rows[0]?.fields[0]?.status).toBe("changed");
 	});
 
 	it("diffs a repeater inside a block and points at it", () => {

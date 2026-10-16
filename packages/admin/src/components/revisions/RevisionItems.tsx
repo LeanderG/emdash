@@ -23,10 +23,12 @@ function itemSummary(row: ItemRow): string | null {
 
 const ItemCard = React.memo(function ItemCard({
 	row,
+	repeater,
 	marked,
 	renderField,
 }: {
 	row: ItemRow;
+	repeater: boolean;
 	marked: boolean;
 	renderField: RenderItemField;
 }) {
@@ -43,7 +45,7 @@ const ItemCard = React.memo(function ItemCard({
 	if (marked) {
 		if (row.status === "added") badges.push(t`Added`);
 		if (row.status === "removed") badges.push(t`Removed`);
-		if (row.status === "changed") badges.push(t`Edited`);
+		if (row.status === "changed") badges.push(repeater ? t`Changed` : t`Edited`);
 		if (row.moved) badges.push(t`Moved`);
 	}
 
@@ -118,6 +120,7 @@ export function RevisionItems({
 				<ItemCard
 					key={row.targetId}
 					row={row}
+					repeater={kind === "repeater"}
 					marked={row.status === "unchanged" && !row.moved ? false : marked}
 					renderField={renderField}
 				/>
