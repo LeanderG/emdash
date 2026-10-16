@@ -6,6 +6,7 @@ import type {
 	ChangeItem,
 	FieldDiff,
 	FieldRef,
+	ItemRow,
 	NormalizedBlock,
 	RevisionDiff,
 	Snippet,
@@ -50,6 +51,10 @@ export function describeChanges(
 			}
 			continue;
 		}
+		if (field.type === "items" && field.kind === "blocks") {
+			for (const row of field.rows) items.push(...blockItemEntries(ref, row));
+			continue;
+		}
 		if (field.status === "unchanged") continue;
 		const target = field.targetId;
 		if (field.slug === options.titleField) {
@@ -90,6 +95,31 @@ function blockItem(field: FieldRef, row: BlockRow, locale: string | undefined): 
 			return item.snippet ? item : { ...item, snippet: snippetOf(row.previous, locale) };
 		}
 	}
+}
+
+/** An entry for an added, removed or moved block, and one for each field an edit changed. */
+function blockItemEntries(field: FieldRef, row: ItemRow): ChangeItem[] {
+	const entry = (
+		action: Extract<ChangeItem, { kind: "blockItem" }>["action"],
+		target = row.targetId,
+		blockField: FieldRef | null = null,
+	): ChangeItem => ({
+		kind: "blockItem",
+		field,
+		action,
+		label: row.label ?? row.type,
+		blockField,
+		target,
+	});
+	if (row.status === "added" || row.status === "removed") return [entry(row.status)];
+	const entries = row.moved ? [entry("moved")] : [];
+	if (row.status === "changed") {
+		for (const changed of row.fields) {
+			if (changed.status === "unchanged") continue;
+			entries.push(entry("edited", changed.targetId, { slug: changed.slug, label: changed.label }));
+		}
+	}
+	return entries;
 }
 
 /** Names the one thing that changed about an image, or calls it changed when several did. */

@@ -15,6 +15,7 @@ import type {
 	DiffFieldDescriptor,
 	DiffOptions,
 	FieldDiff,
+	ItemRow,
 	RevisionDiff,
 	RevisionLike,
 	TextDiff,
@@ -1115,5 +1116,232 @@ describe("revision diff: bounded work", () => {
 		);
 
 		expect(statuses(diff)).toEqual(["changed", "unchanged", "unchanged", "changed"]);
+	});
+});
+
+describe("revision diff: blocks and repeater fields", () => {
+	const slideFields = [{ slug: "statement", label: "Statement", type: "string" }];
+	const fields = {
+		sections: {
+			kind: "blocks",
+			label: "Sections",
+			blockTypes: [
+				{
+					slug: "hero",
+					label: "Hero",
+					versions: [
+						{
+							version: 1,
+							fields: [
+								{ slug: "headline", label: "Headline", type: "string" },
+								{ slug: "image", label: "Image", type: "image" },
+							],
+						},
+						{
+							version: 2,
+							fields: [
+								{ slug: "headline", label: "Headline", type: "string" },
+								{ slug: "image", label: "Image", type: "image" },
+								{ slug: "centered", label: "Centered", type: "boolean" },
+							],
+						},
+					],
+				},
+				{
+					slug: "banner",
+					label: "Banner",
+					versions: [{ version: 1, fields: [{ slug: "text", label: "Text", type: "text" }] }],
+				},
+				{
+					slug: "carousel",
+					label: "Carousel",
+					versions: [
+						{
+							version: 1,
+							fields: [
+								{
+									slug: "slides",
+									label: "Slides",
+									type: "repeater",
+									validation: { subFields: slideFields },
+								},
+							],
+						},
+					],
+				},
+			],
+		},
+		facts: { kind: "repeater", label: "Facts", validation: { subFields: slideFields } },
+	} satisfies Record<string, DiffFieldDescriptor>;
+
+	function item(type: string, key: string, values: Record<string, unknown> = {}, version = 1) {
+		return { _type: type, _version: version, _key: key, ...values };
+	}
+
+	const hero = item("hero", "h", { headline: "Welcome" });
+	const banner = item("banner", "b", { text: "Sale" });
+	const second = item("banner", "c", { text: "Hiring" });
+	const slides = (...statements: string[]) => statements.map((statement) => ({ statement }));
+
+	function blockItemChanges(previous: unknown[], current: unknown[]) {
+		return diffRevisions({ sections: previous }, { sections: current }, fields).changes.map(
+			(change) =>
+				change.kind === "blockItem"
+					? [change.action, change.label, change.blockField?.label ?? null]
+					: change.kind,
+		);
+	}
+
+	function itemsOf(diff: RevisionDiff, slug: string): ItemRow[] {
+		const found = field(diff, slug);
+		if (found.type !== "items") throw new Error(`${slug} is not a blocks or repeater field`);
+		return [...found.rows];
+	}
+
+	it("lists added and removed blocks by their block type", () => {
+		expect(blockItemChanges([hero, banner], [hero, second])).toEqual([
+			["removed", "Banner", null],
+			["added", "Banner", null],
+		]);
+	});
+
+	it("lists each field an edit changed, pointing at that field inside the block", () => {
+		const diff = diffRevisions(
+			{ sections: [hero, banner] },
+			{ sections: [{ ...hero, headline: "Hello", image: { id: "m1" } }, banner] },
+			fields,
+		);
+		expect(diff.changes).toEqual([
+			expect.objectContaining({
+				kind: "blockItem",
+				action: "edited",
+				label: "Hero",
+				blockField: { slug: "headline", label: "Headline" },
+				target: "f-sections.0.headline",
+			}),
+			expect.objectContaining({ blockField: { slug: "image", label: "Image" } }),
+		]);
+	});
+
+	it("diffs the fields inside a block like top-level fields", () => {
+		const diff = diffRevisions(
+			{ sections: [hero, banner] },
+			{ sections: [hero, { ...banner, text: "Spring Sale" }] },
+			fields,
+		);
+		const [heroRow, bannerRow] = itemsOf(diff, "sections");
+		expect(heroRow?.fields.map((inner) => [inner.slug, inner.status])).toEqual([
+			["headline", "unchanged"],
+			["image", "unchanged"],
+		]);
+		const text = bannerRow?.fields[0];
+		expect(text).toMatchObject({ type: "text", status: "changed", targetId: "f-sections.1.text" });
+		if (text?.type !== "text") return;
+		expect(oldText(text.text)).toBe("Sale");
+		expect(text.text.segments.filter((segment) => segment.change === "same")).toMatchObject([
+			{ text: "Sale" },
+		]);
+		expect(bannerRow?.descriptors.text).toMatchObject({ kind: "richText", label: "Text" });
+	});
+
+	it("reports two swapped blocks as one move, not as edits", () => {
+		expect(blockItemChanges([hero, banner, second], [hero, second, banner])).toEqual([
+			["moved", "Banner", null],
+		]);
+	});
+
+	it("reports a block that moved and changed as both", () => {
+		expect(
+			blockItemChanges([hero, banner, second], [{ ...second, text: "Hiring!" }, hero, banner]),
+		).toEqual([
+			["moved", "Banner", null],
+			["edited", "Banner", "Text"],
+		]);
+	});
+
+	it("ignores a block type version upgrade that changes no value", () => {
+		const upgraded = { ...hero, _version: 2, centered: false };
+		expect(blockItemChanges([hero], [upgraded])).toEqual(["noChanges"]);
+	});
+
+	it("pairs blocks without keys by their content", () => {
+		const unkeyed = (value: Record<string, unknown>) => {
+			const { _key: _, ...rest } = value;
+			return rest;
+		};
+		expect(blockItemChanges([unkeyed(hero), unkeyed(banner)], [unkeyed(banner)])).toEqual([
+			["removed", "Hero", null],
+		]);
+	});
+
+	it("places removed blocks after the block that preceded them and targets each row", () => {
+		const diff = diffRevisions(
+			{ sections: [hero, banner, second] },
+			{ sections: [hero, second] },
+			fields,
+		);
+		expect(field(diff, "sections").status).toBe("changed");
+		expect(
+			itemsOf(diff, "sections").map((row) => [
+				row.status,
+				row.value._key,
+				row.targetId,
+				row.position,
+			]),
+		).toEqual([
+			["unchanged", "h", "i-sections-0", 1],
+			["removed", "b", "i-sections-1", 2],
+			["unchanged", "c", "i-sections-2", 2],
+		]);
+		expect(diff.changes).toEqual([
+			expect.objectContaining({ kind: "blockItem", action: "removed", target: "i-sections-1" }),
+		]);
+	});
+
+	it("pairs repeater items, which have no keys, by content and then by position", () => {
+		const edited = diffRevisions(
+			{ facts: slides("Fast", "Cheap", "Good") },
+			{ facts: slides("Fast", "Cheaper", "Good") },
+			fields,
+		);
+		expect(itemsOf(edited, "facts").map((row) => row.status)).toEqual([
+			"unchanged",
+			"changed",
+			"unchanged",
+		]);
+		expect(edited.changes).toEqual([
+			{ kind: "field", field: { slug: "facts", label: "Facts" }, target: "f-facts" },
+		]);
+
+		const removed = diffRevisions(
+			{ facts: slides("Fast", "Cheap", "Good") },
+			{ facts: slides("Fast", "Good") },
+			fields,
+		);
+		expect(itemsOf(removed, "facts").map((row) => [row.status, row.value.statement])).toEqual([
+			["unchanged", "Fast"],
+			["removed", "Cheap"],
+			["unchanged", "Good"],
+		]);
+	});
+
+	it("diffs a repeater inside a block and points at it", () => {
+		const carousel = item("carousel", "k", { slides: slides("One", "Two") });
+		const diff = diffRevisions(
+			{ sections: [carousel] },
+			{ sections: [{ ...carousel, slides: slides("One", "Two", "Three") }] },
+			fields,
+		);
+		expect(diff.changes).toEqual([
+			expect.objectContaining({ blockField: { slug: "slides", label: "Slides" } }),
+		]);
+		const inner = itemsOf(diff, "sections")[0]?.fields[0];
+		expect(inner).toMatchObject({ type: "items", targetId: "f-sections.0.slides" });
+		if (inner?.type !== "items") return;
+		expect(inner.rows.map((row) => [row.status, row.targetId])).toEqual([
+			["unchanged", "i-sections.0.slides-0"],
+			["unchanged", "i-sections.0.slides-1"],
+			["added", "i-sections.0.slides-2"],
+		]);
 	});
 });
