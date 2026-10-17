@@ -254,6 +254,19 @@ export type ChangeItem =
 			target: string;
 	  }
 	| {
+			kind: "repeaterItem";
+			/** The repeater field. */
+			field: FieldRef;
+			action: "added" | "removed" | "edited" | "moved";
+			/** The item's number as its card shows it: the old one for a removed item. */
+			position: number;
+			/** For an edit, the item field that changed. */
+			itemField: FieldRef | null;
+			/** The block type's label when the repeater is a field of a block. */
+			block: string | null;
+			target: string;
+	  }
+	| {
 			kind: "image";
 			field: FieldRef;
 			action: "added" | "removed" | "replaced" | "captionEdited" | "altEdited" | "changed";

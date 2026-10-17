@@ -51,8 +51,14 @@ export function describeChanges(
 			}
 			continue;
 		}
-		if (field.type === "items" && field.kind === "blocks") {
-			for (const row of field.rows) items.push(...blockItemEntries(ref, row));
+		if (field.type === "items") {
+			for (const row of field.rows) {
+				items.push(
+					...(field.kind === "blocks"
+						? blockItemEntries(ref, row)
+						: repeaterItemEntries(ref, row, null)),
+				);
+			}
 			continue;
 		}
 		if (field.status === "unchanged") continue;
@@ -109,6 +115,40 @@ function blockItemEntries(field: FieldRef, row: ItemRow): ChangeItem[] {
 		action,
 		label: row.label ?? row.type,
 		blockField,
+		target,
+	});
+	if (row.status === "added" || row.status === "removed") return [entry(row.status)];
+	const entries = row.moved ? [entry("moved")] : [];
+	if (row.status === "changed") {
+		for (const changed of row.fields) {
+			if (changed.status === "unchanged") continue;
+			const blockField = { slug: changed.slug, label: changed.label };
+			const inner =
+				changed.type === "items"
+					? changed.rows.flatMap((innerRow) =>
+							repeaterItemEntries(blockField, innerRow, row.label ?? row.type),
+						)
+					: [];
+			if (inner.length > 0) entries.push(...inner);
+			else entries.push(entry("edited", changed.targetId, blockField));
+		}
+	}
+	return entries;
+}
+
+/** An entry for an added, removed or moved repeater item, and one for each field an edit changed. */
+function repeaterItemEntries(field: FieldRef, row: ItemRow, block: string | null): ChangeItem[] {
+	const entry = (
+		action: Extract<ChangeItem, { kind: "repeaterItem" }>["action"],
+		target = row.targetId,
+		itemField: FieldRef | null = null,
+	): ChangeItem => ({
+		kind: "repeaterItem",
+		field,
+		action,
+		position: row.position,
+		itemField,
+		block,
 		target,
 	});
 	if (row.status === "added" || row.status === "removed") return [entry(row.status)];

@@ -914,7 +914,7 @@ describe("revision diff: fields", () => {
 		);
 		expect(
 			changed.changes.map((item) => (item.kind === "field" ? item.field.slug : item.kind)),
-		).toEqual(["category", "tags", "rating", "publishOn", "cover", "meta", "links"]);
+		).toEqual(["category", "tags", "rating", "publishOn", "cover", "meta", "repeaterItem"]);
 	});
 
 	it("survives an invalid locale tag", () => {
@@ -1324,7 +1324,15 @@ describe("revision diff: blocks and repeater fields", () => {
 			"unchanged",
 		]);
 		expect(edited.changes).toEqual([
-			{ kind: "field", field: { slug: "facts", label: "Facts" }, target: "f-facts" },
+			{
+				kind: "repeaterItem",
+				field: { slug: "facts", label: "Facts" },
+				action: "edited",
+				position: 2,
+				itemField: { slug: "statement", label: "Statement" },
+				block: null,
+				target: "f-facts.1.statement",
+			},
 		]);
 
 		const removed = diffRevisions(
@@ -1337,6 +1345,15 @@ describe("revision diff: blocks and repeater fields", () => {
 			["removed", "Cheap"],
 			["unchanged", "Good"],
 		]);
+		expect(removed.changes).toEqual([
+			expect.objectContaining({
+				kind: "repeaterItem",
+				action: "removed",
+				position: 2,
+				itemField: null,
+				target: "i-facts-1",
+			}),
+		]);
 	});
 
 	it("keeps reordered repeater values instead of showing a removal and addition", () => {
@@ -1348,6 +1365,9 @@ describe("revision diff: blocks and repeater fields", () => {
 		const rows = itemsOf(diff, "facts");
 		expect(rows.map((row) => row.status)).toEqual(["unchanged", "unchanged"]);
 		expect(rows.filter((row) => row.moved)).toHaveLength(1);
+		expect(diff.changes).toEqual([
+			expect.objectContaining({ kind: "repeaterItem", action: "moved", itemField: null }),
+		]);
 	});
 
 	it("compares remaining repeater values when an edit and reorder happen together", () => {
@@ -1373,7 +1393,15 @@ describe("revision diff: blocks and repeater fields", () => {
 			fields,
 		);
 		expect(diff.changes).toEqual([
-			expect.objectContaining({ blockField: { slug: "slides", label: "Slides" } }),
+			{
+				kind: "repeaterItem",
+				field: { slug: "slides", label: "Slides" },
+				action: "added",
+				position: 3,
+				itemField: null,
+				block: "Carousel",
+				target: "i-sections.0.slides-2",
+			},
 		]);
 		const inner = itemsOf(diff, "sections")[0]?.fields[0];
 		expect(inner).toMatchObject({ type: "items", targetId: "f-sections.0.slides" });
@@ -1382,6 +1410,26 @@ describe("revision diff: blocks and repeater fields", () => {
 			["unchanged", "i-sections.0.slides-0"],
 			["unchanged", "i-sections.0.slides-1"],
 			["added", "i-sections.0.slides-2"],
+		]);
+	});
+
+	it("lists each field edited inside a repeater item of a block", () => {
+		const carousel = item("carousel", "k", { slides: slides("One", "Two") });
+		const diff = diffRevisions(
+			{ sections: [carousel] },
+			{ sections: [{ ...carousel, slides: slides("One", "Second") }] },
+			fields,
+		);
+		expect(diff.changes).toEqual([
+			{
+				kind: "repeaterItem",
+				field: { slug: "slides", label: "Slides" },
+				action: "edited",
+				position: 2,
+				itemField: { slug: "statement", label: "Statement" },
+				block: "Carousel",
+				target: "f-sections.0.slides.1.statement",
+			},
 		]);
 	});
 });
