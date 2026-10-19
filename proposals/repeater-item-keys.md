@@ -25,6 +25,7 @@ Without a stored key, nothing can tell which item is which across saves:
 - Site code that renders repeater items has to use the array index as the component key. After an editor reorders or deletes items, frameworks reuse component state for the wrong item.
 - The admin editor matches incoming items to its temporary keys by position. When the value changes from outside the editor, collapsed state follows the position instead of the item.
 - Revision history has to guess which items correspond between versions. [Changes inside blocks and repeater fields in revision history](https://github.com/LeanderG/emdash/blob/design/revision-history-blocks-and-repeaters/proposals/revision-history-blocks-and-repeaters.md) pairs repeater items by identical content and then by position. Removing one item and editing its neighbor in the same save can read as an edit to the wrong item.
+- Features that need to refer to one specific item, such as visual editing or comments on a repeater item, have no stable identifier to point at. This RFC doesn't build them, but they depend on it.
 
 Blocks fields don't have this problem. Every block carries a `_key` that the server assigns when the client doesn't send one, and the server uses it to match blocks to their stored versions.
 
